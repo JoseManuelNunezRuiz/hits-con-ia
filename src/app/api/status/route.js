@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSongByPaymentId } from '../generate-callback/route.js';
+import { supabase } from '@/app/lib/supabaseClient';
 
 export async function GET(req) {
   try {
@@ -10,24 +10,32 @@ export async function GET(req) {
       return NextResponse.json({ error: 'Falta el payment_id' }, { status: 400 });
     }
 
-    const song = getSongByPaymentId(payment_id);
+    const { data: songs, error } = await supabase
+      .from('songs')
+      .select('*')
+      .eq('payment_id', payment_id)
+      .limit(1)
+      .single();
 
-    if (!song) {
-      // No existe canción generada todavía
+    if (error && error.code !== 'PGRST116') {  // Código para no encontrado
+      console.error('Error consultando Supabase:', error);
+      return NextResponse.json({ error: 'Error de base de datos' }, { status: 500 });
+    }
+
+    if (!songs) {
       return NextResponse.json({ ready: false, message: 'Canción no encontrada' }, { status: 404 });
     }
 
-    if (!song.audioUrl) {
-      // La canción aún no tiene URL de audio (proceso no completado)
+    if (!songs.audio_url) {
       return NextResponse.json({ ready: false, message: 'Generación en progreso' }, { status: 202 });
     }
 
     return NextResponse.json({
       ready: true,
-      url: song.audioUrl,
-      title: song.title,
-      prompt: song.prompt,
-      duration: song.duration
+      url: songs.audio_url,
+      title: songs.title,
+      prompt: songs.prompt,
+      duration: songs.duration,
     });
 
   } catch (error) {
