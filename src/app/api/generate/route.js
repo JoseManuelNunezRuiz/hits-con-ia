@@ -1,5 +1,5 @@
-// /app/api/generate/route.js 
 import { NextResponse } from 'next/server';
+import { linkTaskToPayment } from '../generate-callback/route.js';
 
 export async function POST(req) {
   try {
@@ -9,13 +9,16 @@ export async function POST(req) {
       return NextResponse.json({ error: 'Prompt es requerido' }, { status: 400 });
     }
 
+    if (!payment_id) {
+      return NextResponse.json({ error: 'payment_id es requerido' }, { status: 400 });
+    }
+
     const apiKey = process.env.SUNO_API_KEY;
     if (!apiKey) {
       console.error('No se encontró SUNO_API_KEY');
       return NextResponse.json({ error: 'Configuración de API key faltante' }, { status: 500 });
     }
 
-    // Usar la URL del callback correcto
     const callbackUrl = `${process.env.NEXT_PUBLIC_BASE_URL}/api/generate-callback`;
 
     const body = {
@@ -24,8 +27,7 @@ export async function POST(req) {
       model: 'V3_5',
       prompt,
       callBackUrl: callbackUrl,
-      // Agregar payment_id como metadata para poder vincularlo después
-      metadata: { payment_id }
+      metadata: { payment_id } // Aunque no viene en callback, lo dejamos para referencia
     };
 
     console.log('Generando con prompt:', prompt);
@@ -43,7 +45,7 @@ export async function POST(req) {
     if (!response.ok) {
       const text = await response.text();
       console.error('Error response from Suno:', text);
-      
+
       let errorMsg = 'Error en la API de Suno';
       try {
         const errorData = JSON.parse(text);
@@ -57,10 +59,15 @@ export async function POST(req) {
 
     const data = await response.json();
     console.log('Respuesta de Suno:', data);
-    
-    return NextResponse.json({ 
-      task_id: data.data?.task_id || data.task_id || null,
-      success: true 
+
+    // Guardar el mapeo task_id <-> payment_id para luego usar en callback
+    if (data.task_id && payment_id) {
+      linkTaskToPayment(data.task_id, payment_id);
+    }
+
+    return NextResponse.json({
+      task_id: data.task_id || null,
+      success: true
     });
 
   } catch (error) {

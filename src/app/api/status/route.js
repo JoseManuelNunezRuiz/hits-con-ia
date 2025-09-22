@@ -1,4 +1,3 @@
-// /app/api/status/route.js 
 import { NextResponse } from 'next/server';
 import { getSongByPaymentId } from '../generate-callback/route.js';
 
@@ -13,12 +12,18 @@ export async function GET(req) {
 
     const song = getSongByPaymentId(payment_id);
 
-    if (!song || !song.audioUrl) {
-      return NextResponse.json({ ready: false });
+    if (!song) {
+      // No existe canción generada todavía
+      return NextResponse.json({ ready: false, message: 'Canción no encontrada' }, { status: 404 });
     }
 
-    return NextResponse.json({ 
-      ready: true, 
+    if (!song.audioUrl) {
+      // La canción aún no tiene URL de audio (proceso no completado)
+      return NextResponse.json({ ready: false, message: 'Generación en progreso' }, { status: 202 });
+    }
+
+    return NextResponse.json({
+      ready: true,
       url: song.audioUrl,
       title: song.title,
       prompt: song.prompt,
