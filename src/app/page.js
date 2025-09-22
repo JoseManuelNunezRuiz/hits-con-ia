@@ -347,7 +347,7 @@ export default function SunoMusicGenerator() {
                 </div>
                 
                 <p className="text-purple-200 text-xs mb-4 italic">
-                  '{song.prompt}'
+                  &ldquo;{song.prompt}&rdquo;
                 </p>
                 
                 <div className="flex space-x-3">
