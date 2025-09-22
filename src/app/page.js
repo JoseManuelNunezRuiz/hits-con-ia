@@ -35,9 +35,8 @@ export default function SunoMusicGenerator() {
     try {
       const res = await fetch('/api/songs');
       if (!res.ok) throw new Error('Error al obtener canciones');
-      const backendSongs = await res.json();
+      const { songs: backendSongs } = await res.json();
 
-      // Combina sin duplicar
       setGeneratedSongs(prevSongs => {
         const allIds = new Set(prevSongs.map(s => s.id));
         const newSongs = backendSongs.filter(s => !allIds.has(s.id));
