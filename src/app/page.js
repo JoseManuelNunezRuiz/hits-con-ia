@@ -8,19 +8,37 @@ export default function SunoMusicGenerator() {
   const [generatedSongs, setGeneratedSongs] = useState([]);
   const [currentPlaying, setCurrentPlaying] = useState(null);
   const [saveStatus, setSaveStatus] = useState('');
-  const [paymentStatus, setPaymentStatus] = useState(null); // 'processing', 'success', 'error'
+  const [paymentStatus, setPaymentStatus] = useState(null);
   const [downloadUrl, setDownloadUrl] = useState('');
   const [currentPaymentId, setCurrentPaymentId] = useState('');
   const audioRef = useRef(null);
+  const pollingIntervalRef = useRef(null);
 
-  // Cargar canciones guardadas al iniciar y del backend, también verificar pago
+  // Cargar canciones guardadas al iniciar
   useEffect(() => {
     loadSavedSongs();
     fetchGeneratedSongs();
-    checkPaymentStatus();
+    
+    // Verificar pago solo si hay parámetros en la URL
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get('status');
+    const payment_id = params.get('payment_id');
+    const collection_status = params.get('collection_status');
+
+    if (status === 'approved' || collection_status === 'approved') {
+      checkPaymentStatus();
+    }
   }, []);
 
-  // Obtener canciones guardadas localmente
+  // Limpiar intervalos al desmontar el componente
+  useEffect(() => {
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
+    };
+  }, []);
+
   const loadSavedSongs = () => {
     try {
       const saved = JSON.parse(localStorage.getItem('sunoSongs') || '[]');
@@ -30,7 +48,6 @@ export default function SunoMusicGenerator() {
     }
   };
 
-  // Obtener canciones desde el backend
   const fetchGeneratedSongs = async () => {
     try {
       const res = await fetch('/api/songs');
@@ -47,7 +64,6 @@ export default function SunoMusicGenerator() {
     }
   };
 
-  // Guardar canciones localmente
   const saveSongsToStorage = (songs) => {
     try {
       localStorage.setItem('sunoSongs', JSON.stringify(songs));
@@ -60,7 +76,7 @@ export default function SunoMusicGenerator() {
     }
   };
 
-  // Verificar estado del pago al cargar la página
+  // Verificar estado del pago SOLO cuando hay parámetros en la URL
   const checkPaymentStatus = () => {
     const params = new URLSearchParams(window.location.search);
     const status = params.get('status');
@@ -71,25 +87,44 @@ export default function SunoMusicGenerator() {
       setPaymentStatus('processing');
       setCurrentPaymentId(payment_id);
       setIsGenerating(true);
-      pollGenerationStatus(payment_id);
+      startPolling(payment_id);
+      
+      // Limpiar parámetros de URL inmediatamente para evitar loops
+      window.history.replaceState({}, document.title, window.location.pathname);
     } else if (status === 'rejected' || status === 'cancelled') {
       setPaymentStatus('error');
+      window.history.replaceState({}, document.title, window.location.pathname);
     }
   };
 
-  // Polling para verificar el estado de generación
-  const pollGenerationStatus = (payment_id) => {
-    const interval = setInterval(async () => {
+  // Polling con mejor control
+  const startPolling = (payment_id) => {
+    // Limpiar cualquier intervalo previo
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+    }
+
+    let pollCount = 0;
+    const maxPolls = 100; // Máximo 5 minutos (3000ms * 100 = 300000ms)
+
+    pollingIntervalRef.current = setInterval(async () => {
+      pollCount++;
+      
       try {
         const response = await fetch(`/api/status?payment_id=${payment_id}`);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
         const data = await response.json();
 
         if (data.ready && data.url) {
+          // Canción lista
           setDownloadUrl(data.url);
           setPaymentStatus('success');
           setIsGenerating(false);
 
-          // Agregar la canción generada a la lista
           const newSong = {
             id: payment_id,
             title: data.title || `Canción generada`,
@@ -104,37 +139,45 @@ export default function SunoMusicGenerator() {
           setGeneratedSongs(updatedSongs);
           saveSongsToStorage(updatedSongs);
 
-          clearInterval(interval);
-
-          // Limpiar parámetros de URL
-          window.history.replaceState({}, document.title, window.location.pathname);
-        } else if (data.error) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        } else if (data.error || pollCount >= maxPolls) {
+          // Error o timeout
           setPaymentStatus('error');
           setIsGenerating(false);
-          clearInterval(interval);
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
         }
+        // Si no está lista, continuar polling
       } catch (error) {
         console.error('Error verificando estado:', error);
+        
+        // En caso de error, detener después de varios intentos fallidos
+        if (pollCount > 10) {
+          setPaymentStatus('error');
+          setIsGenerating(false);
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
       }
     }, 3000);
 
-    // Timeout después de 5 minutos
+    // Timeout de seguridad
     setTimeout(() => {
-      clearInterval(interval);
-      if (isGenerating) {
+      if (pollingIntervalRef.current) {
         setPaymentStatus('error');
         setIsGenerating(false);
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
       }
     }, 300000);
-
-    return () => clearInterval(interval);
   };
 
-  // Generar canción con pago
   const handleGenerateAndPay = async () => {
     if (!prompt.trim()) return;
 
     try {
+      setIsGenerating(true);
       const response = await fetch('/api/checkout', {
         method: 'POST',
         headers: {
@@ -146,7 +189,6 @@ export default function SunoMusicGenerator() {
       const data = await response.json();
 
       if (data.init_point) {
-        // Redirigir a MercadoPago
         window.location.href = data.init_point;
       } else {
         throw new Error('No se pudo inicializar el pago');
@@ -154,6 +196,7 @@ export default function SunoMusicGenerator() {
     } catch (error) {
       console.error('Error iniciando pago:', error);
       setPaymentStatus('error');
+      setIsGenerating(false);
     }
   };
 
@@ -247,7 +290,7 @@ export default function SunoMusicGenerator() {
           </div>
         )}
 
-        {/* Quick Download - Solo si hay una canción recién generada */}
+        {/* Quick Download */}
         {downloadUrl && paymentStatus === 'success' && (
           <div className="bg-gradient-to-r from-green-600/20 to-blue-600/20 backdrop-blur-sm rounded-2xl p-6 mb-6 border border-green-400/30">
             <div className="text-center">
@@ -389,7 +432,6 @@ export default function SunoMusicGenerator() {
           </div>
         )}
 
-        {/* Hidden audio element */}
         <audio
           ref={audioRef}
           onEnded={handleAudioEnd}
