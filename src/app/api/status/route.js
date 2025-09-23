@@ -1,45 +1,64 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/app/lib/supabaseClient';
 
-export async function GET(req) {
+export async function GET(request) {
   try {
-    const { searchParams } = new URL(req.url);
+    const { searchParams } = new URL(request.url);
     const payment_id = searchParams.get('payment_id');
 
+    console.log('🔍 Consultando status para payment_id:', payment_id);
+
     if (!payment_id) {
-      return NextResponse.json({ error: 'Falta el payment_id' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Falta el payment_id' }, 
+        { status: 400 }
+      );
     }
 
-    const { data: songs, error } = await supabase
+    // Consultar Supabase
+    const { data: song, error } = await supabase
       .from('songs')
       .select('*')
       .eq('payment_id', payment_id)
-      .limit(1)
-      .single();
+      .maybeSingle(); // Usar maybeSingle en lugar de single
 
-    if (error && error.code !== 'PGRST116') {  // Código para no encontrado
-      console.error('Error consultando Supabase:', error);
-      return NextResponse.json({ error: 'Error de base de datos' }, { status: 500 });
+    if (error) {
+      console.error('❌ Error en Supabase:', error);
+      return NextResponse.json(
+        { error: 'Error de base de datos' }, 
+        { status: 500 }
+      );
     }
 
-    if (!songs) {
-      return NextResponse.json({ ready: false, message: 'Canción no encontrada' }, { status: 404 });
+    console.log('📊 Resultado de la consulta:', song);
+
+    if (!song) {
+      return NextResponse.json({ 
+        ready: false, 
+        message: 'Canción no encontrada' 
+      });
     }
 
-    if (!songs.audio_url) {
-      return NextResponse.json({ ready: false, message: 'Generación en progreso' }, { status: 202 });
+    if (!song.audio_url) {
+      return NextResponse.json({ 
+        ready: false, 
+        message: 'Generación en progreso' 
+      });
     }
 
     return NextResponse.json({
       ready: true,
-      url: songs.audio_url,
-      title: songs.title,
-      prompt: songs.prompt,
-      duration: songs.duration,
+      url: song.audio_url,
+      title: song.title,
+      prompt: song.prompt,
+      duration: song.duration,
     });
 
   } catch (error) {
-    console.error('Error verificando status:', error);
-    return NextResponse.json({ ready: false, error: 'Error interno' }, { status: 500 });
+    console.error('🔥 Error en /api/status:', error);
+    return NextResponse.json(
+      { error: 'Error interno del servidor' }, 
+      { status: 500 }
+    );
   }
 }
